@@ -115,6 +115,7 @@ int get_gpio_hwrev(int gpio)
 }
 
 #ifdef BT_UART_CFG
+// #define GPIO_CFG(gpio, func, dir, pull, drvstr)
 static unsigned bt_uart_on_table[] = {
     GPIO_CFG(GPIO_BT_UART_RTS, 2, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL,
         GPIO_CFG_8MA),
@@ -197,6 +198,7 @@ static int bcm4354_bt_rfkill_set_power(void *data, bool blocked)
 
     if(cnt < 1) {
         /* configure host_wake as input */
+        pr_debug("bcm4354_bt_rfkill_set_power: first call, configure GPIO host_wake as input (func0,input,no-pull,16ma)");
         gpio_tlmm_config(GPIO_CFG(gpio_bt_host_wake, 0, GPIO_CFG_INPUT,
                                 GPIO_CFG_NO_PULL, GPIO_CFG_16MA), GPIO_CFG_ENABLE);
         ret = gpio_direction_input(gpio_bt_host_wake);
@@ -212,12 +214,15 @@ static int bcm4354_bt_rfkill_set_power(void *data, bool blocked)
     if (!blocked) {
         pr_err("[BT] Bluetooth Power On.(%d)\n", gpio_bt_en);
 
+        pr_debug("bcm4354_bt_rfkill_set_power: set gpio BT_WAKE (%d) value 1", BT_WAKE);
         gpio_set_value(get_gpio_hwrev(BT_WAKE), 1);
 
         if (gpio_get_value(get_gpio_hwrev(gpio_bt_host_wake)) == 0)
             pr_err("[BT] BT_HOST_WAKE is low.\n");
 
 #ifdef BT_UART_CFG
+        pr_err("[BT] turn ON the UART ports");
+        pr_debug("bcm4354_bt_rfkill_set_power: BT_UART_CFG is enabled, loop over bt_uart_on_table");
         for (pin = 0; pin < ARRAY_SIZE(bt_uart_on_table); pin++) {
             rc = gpio_tlmm_config(bt_uart_on_table[pin],
                 GPIO_CFG_ENABLE);
@@ -227,11 +232,13 @@ static int bcm4354_bt_rfkill_set_power(void *data, bool blocked)
         }
 #endif
 
+        pr_debug("bcm4354_bt_rfkill_set_power: set GPIO bt_en (%d) to output", gpio_bt_en);
         ret = gpio_direction_output(gpio_bt_en, 1);
         if (ret)
             pr_err("[BT] failed to set BT_EN.\n");
     } else {
 #ifdef BT_UART_CFG
+        pr_err("[BT] turning UART off");
         for (pin = 0; pin < ARRAY_SIZE(bt_uart_off_table); pin++) {
             rc = gpio_tlmm_config(bt_uart_off_table[pin],
                 GPIO_CFG_ENABLE);
@@ -240,13 +247,13 @@ static int bcm4354_bt_rfkill_set_power(void *data, bool blocked)
                     __func__, bt_uart_off_table[pin], rc);
         }
 #endif
-        pr_err("[BT] Bluetooth Power Off.(%d)\n", gpio_bt_en);
+        pr_err("[BT] Bluetooth Power Off. (bt_en = %d)\n", gpio_bt_en);
 
         ret = gpio_direction_output(gpio_bt_en, 0);
-  	    if (ret)
+        if (ret)
             pr_err("[BT] failed to set BT_EN.\n");
 
-		gpio_set_value(get_gpio_hwrev(BT_WAKE), 0);
+        gpio_set_value(get_gpio_hwrev(BT_WAKE), 0);
     }
     return 0;
 }
@@ -282,7 +289,18 @@ static int bcm4354_bluetooth_probe(struct platform_device *pdev)
     int pin = 0;
 #endif
 
+    pr_debug("bcm4354_bluetooth_probe: start");
+    pr_debug("  some predefined pin numbers:");
+    pr_debug("    GPIO_BT_EN   = %d", GPIO_BT_EN);
+    pr_debug("    BT_WAKE      = %d", BT_WAKE);
+    pr_debug("    BT_HOST_WAKE = %d", BT_HOST_WAKE);
+    pr_debug("    UART_RTS     = %d", GPIO_BT_UART_RTS);
+    pr_debug("    UART_CTS     = %d", GPIO_BT_UART_CTS);
+    pr_debug("    UART_RXD     = %d", GPIO_BT_UART_RXD);
+    pr_debug("    UART_TXD     = %d", GPIO_BT_UART_TXD);
+
 #ifdef BT_EN_PMIC_GPIO
+    pr_debug("bcm4354_bluetooth_probe: BT_EN_PMIC_GPIO is defined");
     if (pdev->dev.of_node) {
         gpio_bt_en = of_get_named_gpio(pdev->dev.of_node,
                         "bcm,bt-en-gpio", 0);
@@ -290,8 +308,12 @@ static int bcm4354_bluetooth_probe(struct platform_device *pdev)
             pr_err("[BT] %s:gpio_bt_en(%d) not provided in device tree", __func__, gpio_bt_en);
             return gpio_bt_en;
         }
+    } else {
+        pr_debug("bcm4354_bluetooth_probe: BT_EN_PMIC_GPIO is enabled, but device does not have of_node");
     }
 #endif
+
+    pr_debug("bcm4354_bluetooth_probe: requesting gpio_bt_en = %d", gpio_bt_en);
     rc = gpio_request(gpio_bt_en, "bt_en");
     if (rc)
     {
@@ -300,27 +322,36 @@ static int bcm4354_bluetooth_probe(struct platform_device *pdev)
     }
 
 #ifdef BT_EN_GENERAL_GPIO
+    pr_debug("bcm4354_bluetooth_probe: BT_EN_GENERAL_GPIO enabled, set cfg to out pull-down 8ma, value to 0");
     gpio_tlmm_config(GPIO_CFG(gpio_bt_en, 0, GPIO_CFG_OUTPUT,
         GPIO_CFG_PULL_DOWN, GPIO_CFG_8MA), GPIO_CFG_ENABLE);
     gpio_set_value(gpio_bt_en, 0);
+#else
+    pr_debug("bcm4354_bluetooth_probe: BT_EN_GENERAL_GPIO not enabled");
 #endif
 
     /* temporailiy set HOST_WAKE OUT direction until FPGA work finishs */
     /* if setting HOST_WAKE to NO PULL, BT would not be turned on. */
     /* By guideline of BRCM, it is needed to determine pull status */
 #ifndef BT_LPM_ENABLE
+    pr_debug("bcm4354_bluetooth_probe: BT_LPM_ENABLE enabled, configuring pin gpio_bt_host_wake (%d) to out pull-up 8ma, value to 1", gpio_bt_host_wake);
     gpio_tlmm_config(GPIO_CFG(get_gpio_hwrev(gpio_bt_host_wake), 0, GPIO_CFG_OUTPUT,
         GPIO_CFG_PULL_UP, GPIO_CFG_8MA), GPIO_CFG_ENABLE);
     gpio_set_value(get_gpio_hwrev(gpio_bt_host_wake), 1);
+#else
+    pr_debug("bcm4354_bluetooth_probe: BT_LPM_ENABLE not enabled");
 #endif
 
 #ifdef BT_UART_CFG
+    pr_debug("bcm4354_bluetooth_probe: BT_UART_CFG is enabled, looping over bt_uart_off_table");
     for (pin = 0; pin < ARRAY_SIZE(bt_uart_off_table); pin++) {
         rc = gpio_tlmm_config(bt_uart_off_table[pin], GPIO_CFG_ENABLE);
         if (rc < 0)
             pr_err("%s: gpio_tlmm_config(%#x)=%d\n",
                 __func__, bt_uart_off_table[pin], rc);
     }
+#else
+    pr_debug("bcm4354_bluetooth_probe: BT_UART_CFG not enabled");
 #endif
 
     bt_rfkill = rfkill_alloc("bcm4354 Bluetooth", &pdev->dev,
