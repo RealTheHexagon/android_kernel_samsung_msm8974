@@ -1466,6 +1466,7 @@ void free_hot_cold_page_list(struct list_head *list, int cold)
  * Note: this is probably too low level an operation for use in drivers.
  * Please consult with lkml before using this in your driver.
  */
+
 void split_page(struct page *page, unsigned int order)
 {
 	int i;
@@ -1474,10 +1475,10 @@ void split_page(struct page *page, unsigned int order)
 	VM_BUG_ON(!page_count(page));
 
 #ifdef CONFIG_KMEMCHECK
-	/*
+	*
 	 * Split shadow pages too, because free(page[0]) would
 	 * otherwise free the whole shadow.
-	 */
+	 *
 	if (kmemcheck_page_is_tracked(page))
 		split_page(virt_to_page(page[0].shadow), order);
 #endif
